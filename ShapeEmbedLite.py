@@ -266,7 +266,7 @@ def test_model( model, dataloader
       # values used for classification test
       lbls.extend(lbl.tolist()), Z.extend(z.tolist())
       if classify_with_scale: Z_.extend(torch.cat((z, og_scale), dim=-1).tolist())
-      if collect_original_data: orig_data.append(x.squeeze(0).cpu().numpy())
+      if collect_original_data: orig_data.append(x.squeeze(dim=tuple(range(1, x.dim()-2))).cpu().numpy())
       # reporting #
       if callable(report_callback):
         lbl = lbl.item()
@@ -274,7 +274,9 @@ def test_model( model, dataloader
         if summary_samples and i in smpls[lbl]: summary_objs[lbl].append(rpt)
     Z = np.array(Z)
     if classify_with_scale: Z_ = np.array(Z_)
-    if collect_original_data: orig_data = np.array(orig_data)
+    if collect_original_data:
+      orig_data = np.array(orig_data)
+      orig_data = orig_data.reshape(-1, *orig_data.shape[-2:])
     # run classification #
     res_classify_test = {}
     res_classify_test['latent_space_only'] = run_classification(Z, lbls, n_splits=n_splits)
