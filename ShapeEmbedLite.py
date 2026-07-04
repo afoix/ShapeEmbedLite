@@ -214,6 +214,7 @@ def test_model( model, dataloader
               , dev=dflt_device
               , report_callback=None
               , summary_samples=None
+              , collect_original_data=False
               ):
   # Check if the dataset is a raw dataset or a Subset wrapper
   if not hasattr(dataloader.dataset, "dataset"):
@@ -251,6 +252,7 @@ def test_model( model, dataloader
   with torch.no_grad():
     Z, lbls = [], []
     if classify_with_scale: Z_ = []
+    if collect_original_data: orig_data = []
     for i, (x, lbl) in (pbar:=tqdm.tqdm( zip(subset.indices, dataloader)
                                        , desc='testing', total=len(dataloader)
                        )):
@@ -264,6 +266,7 @@ def test_model( model, dataloader
       # values used for classification test
       lbls.extend(lbl.tolist()), Z.extend(z.tolist())
       if classify_with_scale: Z_.extend(torch.cat((z, og_scale), dim=-1).tolist())
+      if collect_original_data: orig_data.append(x.squeeze(0).cpu().numpy())
       # reporting #
       if callable(report_callback):
         lbl = lbl.item()
@@ -271,13 +274,15 @@ def test_model( model, dataloader
         if summary_samples and i in smpls[lbl]: summary_objs[lbl].append(rpt)
     Z = np.array(Z)
     if classify_with_scale: Z_ = np.array(Z_)
+    if collect_original_data: orig_data = np.array(orig_data)
     # run classification #
     res_classify_test = {}
     res_classify_test['latent_space_only'] = run_classification(Z, lbls, n_splits=n_splits)
     if classify_with_scale:
       res_classify_test['with_scale'] = run_classification(Z_, lbls, n_splits=n_splits)
 
-  return [x for objs in summary_objs.values() for x in objs], res_classify_test, Z, lbls
+  return ( [x for objs in summary_objs.values() for x in objs], res_classify_test, Z, lbls
+          , orig_data if collect_original_data else None )
 
 def run_name(clargs):
   nm = f'{get_dataset_name(clargs)}'
@@ -520,33 +525,43 @@ def main(clargs):
     # testing #
     ###########
     model.eval()
-    summary, res_classify_test, Z, lbls = test_model( model, test_loader
+    summary, res_classify_test, Z, lbls, orig_data = test_model( model, test_loader
                                                     , n_splits=clargs.number_splits_classify
                                                     , classify_with_scale=clargs.classify_with_scale
                                                     , dev=dev
                                                     , report_callback=rpt
                                                     , summary_samples=clargs.report_summary
+                                                    , collect_original_data=clargs.dump_original_data
                                                     )
     # save test latent space
     print(f'saving test latent space to {output_d / "test_latent_space.npy"}')
     np.save(output_d / 'test_latent_space.npy', Z)
     print(f'saving test labels to {output_d / "test_labels.npy"}')
     np.save(output_d / 'test_labels.npy', lbls)
+    # save test original data if required
+    if clargs.dump_original_data:
+      print(f'saving test original data to {output_d / "test_original_data.npy"}')
+      np.save(output_d / 'test_original_data.npy', orig_data)
 
     # save train latent space if required
     if clargs.extract_train_latent:
       print('\n---\nextracting training latent space\n'+'-'*80)
-      _, _, Z_train, lbls_train = test_model( model, train_loader
+      _, _, Z_train, lbls_train, orig_data_train = test_model( model, train_loader
                                             , n_splits=clargs.number_splits_classify
                                             , classify_with_scale=clargs.classify_with_scale
                                             , dev=dev
                                             , report_callback=None
                                             , summary_samples=None
+                                            , collect_original_data=clargs.dump_original_data
                                             )
       print(f'saving train latent space to {output_d / "train_latent_space.npy"}')
       np.save(output_d / 'train_latent_space.npy', Z_train)
       print(f'saving train labels to {output_d / "train_labels.npy"}')
       np.save(output_d / 'train_labels.npy', lbls_train)
+      # save train original data if required
+      if clargs.dump_original_data:
+        print(f'saving train original data to {output_d / "train_original_data.npy"}')
+        np.save(output_d / 'train_original_data.npy', orig_data_train)
 
   # reports #
   ###########
@@ -636,6 +651,8 @@ if __name__ == "__main__":
                      , help=f'skip/do not skip training phase' )
   parser.add_argument( '--extract-train-latent', action=argparse.BooleanOptionalAction, default=False
                      , help='enable/disable extracting and saving the training set latent space' )
+  parser.add_argument( '--dump-original-data', action=argparse.BooleanOptionalAction, default=False
+                     , help='enable/disable dumping the original (raw, pre-preprocessing) data alongside the latent space and labels, for later visualisation' )
   parser.add_argument( '--report-only', nargs=2, metavar=('TEST_LATENT_SPACE_NPY', 'TEST_LABELS_NPY'), type=pathlib.Path
                      , help=f'skip to the reporting based on provided latent space and labels (no training, no testing)')
   parser.add_argument( '-r', '--learning-rate', metavar="LR", type=float, default=0.001
